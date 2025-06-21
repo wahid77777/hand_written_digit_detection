@@ -1,48 +1,63 @@
-# WEB APP (Streamlit)
 import streamlit as st
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
 import numpy as np
 
-# Generator model (same as training)
-class DigitGenerator(nn.Module):
-    def __init__(self, latent_dim, num_classes):
-        super(DigitGenerator, self).__init__()
-        self.label_emb = nn.Embedding(num_classes, num_classes)
-        self.model = nn.Sequential(
-            nn.Linear(latent_dim + num_classes, 128),
-            nn.ReLU(True),
-            nn.Linear(128, 256),
-            nn.ReLU(True),
-            nn.Linear(256, 784),
+# Set device
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Generator model matching your training code
+class Generator(nn.Module):
+    def __init__(self, latent_dim=100, num_classes=10):
+        super(Generator, self).__init__()
+        self.latent_dim = latent_dim
+        self.num_classes = num_classes
+        self.main = nn.Sequential(
+            nn.Linear(latent_dim + num_classes, 256),
+            nn.LeakyReLU(0.2),
+            nn.Linear(256, 512),
+            nn.LeakyReLU(0.2),
+            nn.Linear(512, 1024),
+            nn.LeakyReLU(0.2),
+            nn.Linear(1024, 784),
             nn.Tanh()
         )
 
-    def forward(self, noise, labels):
-        input = torch.cat((noise, self.label_emb(labels)), -1)
-        img = self.model(input)
-        return img.view(img.size(0), 1, 28, 28)
+    def forward(self, z, labels):
+        # One-hot encode labels
+        labels_embed = torch.zeros(labels.size(0), self.num_classes).to(device)
+        labels_embed.scatter_(1, labels.unsqueeze(1), 1)
+        x = torch.cat([z, labels_embed], dim=1)
+        output = self.main(x)
+        return output.view(-1, 1, 28, 28)
 
-# Load model
+# Load generator
 latent_dim = 100
 num_classes = 10
-model = DigitGenerator(latent_dim, num_classes)
-model.load_state_dict(torch.load("mnist_generator.pth", map_location=torch.device('cpu')))
-model.eval()
+G = Generator(latent_dim=latent_dim, num_classes=num_classes).to(device)
 
-# Streamlit app
-st.title("Handwritten Digit Generator")
-digit = st.selectbox("Select a digit (0–9)", list(range(10)))
+# Load model weights
+try:
+    G.load_state_dict(torch.load("mnist_generator.pth", map_location=device))
+    G.eval()
+except Exception as e:
+    st.error(f"Model loading failed: {e}")
+    st.stop()
 
-if st.button("Generate Images"):
-    noise = torch.randn(5, latent_dim)
-    labels = torch.full((5,), int(digit), dtype=torch.long)
+# Streamlit UI
+st.title("🧠 Handwritten Digit Generator (0–9)")
+digit = st.selectbox("Choose a digit to generate (0–9)", list(range(10)))
+
+if st.button("Generate 5 Images"):
     with torch.no_grad():
-        images = model(noise, labels).squeeze().numpy()
+        z = torch.randn(5, latent_dim).to(device)
+        labels = torch.full((5,), int(digit), dtype=torch.long).to(device)
+        generated_images = G(z, labels).cpu().squeeze().numpy()
 
+    # Display images
     fig, axes = plt.subplots(1, 5, figsize=(10, 2))
     for i in range(5):
-        axes[i].imshow(images[i], cmap='gray')
-        axes[i].axis('off')
+        axes[i].imshow(generated_images[i], cmap="gray")
+        axes[i].axis("off")
     st.pyplot(fig)
